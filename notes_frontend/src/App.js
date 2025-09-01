@@ -1,47 +1,101 @@
-import React, { useState, useEffect } from 'react';
-import logo from './logo.svg';
-import './App.css';
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import "./App.css";
+import Header from "./components/Header";
+import NoteList from "./components/NoteList";
+import NoteEditor from "./components/NoteEditor";
+import { listNotes, createNote, updateNote, deleteNote } from "./services/api";
 
-// PUBLIC_INTERFACE
+/**
+ * PUBLIC_INTERFACE
+ * App component organizing the layout and managing notes state.
+ */
 function App() {
-  const [theme, setTheme] = useState('light');
+  const [notes, setNotes] = useState([]);
+  const [selectedId, setSelectedId] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  // Effect to apply theme to document element
+  // Load notes
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-  }, [theme]);
+    let mounted = true;
+    (async () => {
+      try {
+        const data = await listNotes();
+        if (mounted) {
+          setNotes(data);
+          setSelectedId(data[0]?.id || null);
+        }
+      } catch (e) {
+        console.error(e);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
 
-  // PUBLIC_INTERFACE
-  const toggleTheme = () => {
-    setTheme(prevTheme => prevTheme === 'light' ? 'dark' : 'light');
-  };
+  const selected = useMemo(() => notes.find(n => n.id === selectedId), [notes, selectedId]);
+
+  // Create new note and select it
+  const handleNew = useCallback(async () => {
+    const draft = { title: "Untitled", content: "" };
+    const created = await createNote(draft);
+    setNotes(prev => [created, ...prev]);
+    setSelectedId(created.id);
+  }, []);
+
+  // Delete note by id
+  const handleDelete = useCallback(async (id) => {
+    await deleteNote(id);
+    setNotes(prev => prev.filter(n => n.id !== id));
+    setSelectedId(prev => (prev === id ? null : prev));
+  }, []);
+
+  // Save note (create or update based on presence of id)
+  const handleSave = useCallback(async (note) => {
+    if (!note.id) {
+      const created = await createNote({ title: note.title, content: note.content });
+      setNotes(prev => [created, ...prev]);
+      setSelectedId(created.id);
+      return;
+    }
+    const updated = await updateNote(note.id, { title: note.title, content: note.content });
+    setNotes(prev => prev.map(n => (n.id === updated.id ? updated : n)));
+  }, []);
+
+  // Start new draft in editor without persisting until user clicks Create
+  const startDraft = useCallback(() => {
+    const tmp = { id: null, title: "", content: "", updatedAt: Date.now() };
+    setSelectedId(null);
+    // we do not add to list; just render editor with no selection
+    setNotes(prev => [...prev]);
+  }, []);
 
   return (
-    <div className="App">
-      <header className="App-header">
-        <button 
-          className="theme-toggle" 
-          onClick={toggleTheme}
-          aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
-        >
-          {theme === 'light' ? '🌙 Dark' : '☀️ Light'}
-        </button>
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.js</code> and save to reload.
-        </p>
-        <p>
-          Current theme: <strong>{theme}</strong>
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
+    <div className="app">
+      <Header onNew={startDraft} />
+      <main className="main">
+        <div className="surface split" role="main">
+          <NoteList
+            notes={notes}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+            onDelete={handleDelete}
+          />
+          {loading ? (
+            <section className="editor">
+              <div className="empty-state">
+                <div>Loading…</div>
+              </div>
+            </section>
+          ) : (
+            <NoteEditor
+              note={selected || (selectedId === null ? { id: null, title: "", content: "", updatedAt: Date.now() } : null)}
+              onSave={handleSave}
+              onDelete={handleDelete}
+            />
+          )}
+        </div>
+      </main>
     </div>
   );
 }
